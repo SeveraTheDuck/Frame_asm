@@ -25,6 +25,8 @@ NUM_OF_SCREEN_SYMBOLS	equ 4000
 
 Start:		call PrintDemonstrationBackground
 
+		call MakeAnimation
+
 		call SetFrameShadowRegisters
 		call PrintFrame		;print shadow
 
@@ -48,17 +50,58 @@ PrintDemonstrationBackground	proc
 		mov es, ax
 		mov si, DEMONSTRATION_FILL
 
-DEM_BACKGROUND:	cmp bx, NUM_OF_SCREEN_SYMBOLS
-		je END_DEM_BACKGROUND
+DemBackground:	cmp bx, NUM_OF_SCREEN_SYMBOLS
+		je EndDemBackground
 		
 		mov es:[bx], si
 
 		inc bx
 		inc bx
-		jmp DEM_BACKGROUND
+		jmp DemBackground
 
-END_DEM_BACKGROUND:
+EndDemBackground:
 		ret
+		endp
+
+;
+;
+;
+;
+;
+;
+MakeAnimation 	proc
+
+		mov di, (FRAME_WIDTH / 2) * 2 ;used to make even numbers
+		mov si, FRAME_FILL
+		mov cl, 0
+		mov dx, LINE_LENGTH * 2
+
+NextAnimation:	cmp di, 0
+		je EndAnimation
+
+		mov al, FRAME_HEIGHT
+		mov ah, 0
+		mov ch, 0
+
+		mov bx, (X_BEGIN + (Y_BEGIN - 1) * LINE_LENGTH) * 2
+		add bx, di
+
+		call PrintFrame
+
+		sub di, 2
+		add cl, 4
+		sub dx, 4
+
+;		push cx
+;		push dx
+;		mov ax, 86h
+;		int 15h
+;		pop dx
+;		pop cx
+
+		jmp NextAnimation
+
+EndAnimation:	ret
 		endp
 
 ;----------------------------------------------------------
