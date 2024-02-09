@@ -4,254 +4,139 @@
 org 100h
 
 ;----------------------------------------------------------
-;positions and sizes
-X_BEGIN			equ 20
-Y_BEGIN			equ 5
-FRAME_WIDTH		equ 40
-FRAME_HEIGHT		equ 10
-LINE_LENGTH		equ 80
+X_BEGIN		equ 20
+Y_BEGIN		equ 6
+FRAME_HEIGHT	equ 10
+FRAME_WIDTH	equ 40
+FRAME_COLOR	equ 1fh
 
-;fill colors and border symbols
-FRAME_FILL		equ 1020h
-FRAME_SHADOW_FILL	equ 0020h
-DEMONSTRATION_FILL	equ 0ff20h ;wtf order???
-FRAME_COLUMN_BORDER	equ 1f7ch
-FRAME_LINE_BORDER	equ 1f2dh
+BG_FILLER	equ 07023h
 
-;video memory constants
-VIDEO_MEMORY		equ 0b800h
-NUM_OF_SCREEN_SYMBOLS	equ 4000
+VIDEO_MEMORY	equ 0b800h
+LINE_LENGTH	equ 80
+LINE_NUMBER	equ 25
 ;----------------------------------------------------------
 
-Start:		call PrintDemonstrationBackground
+Start:		call SetStreams		;ok naming?
+		call FillBackground
 
-		call MakeAnimation
-
-		call SetFrameShadowRegisters
-		call PrintFrame		;print shadow
-
-		call SetFrameRegisters
-		call PrintFrame		;print frame
-
-		call PrintBorder	;print frame border
-
-		mov ax, 4c00h		;terminate program
-		int 21h
-
-;----------------------------------------------------------
-;PrintDemonstrationBackground - prints white background
-;Enter: none
-;Exit:  ES = VIDEO_MEMORY
-;Destr: AX BX ES SI
-;----------------------------------------------------------
-PrintDemonstrationBackground	proc
-		mov ax, VIDEO_MEMORY
-		mov bx, 0
-		mov es, ax
-		mov si, DEMONSTRATION_FILL
-
-DemBackground:	cmp bx, NUM_OF_SCREEN_SYMBOLS
-		je EndDemBackground
-		
-		mov es:[bx], si
-
-		inc bx
-		inc bx
-		jmp DemBackground
-
-EndDemBackground:
-		ret
-		endp
-
-;
-;
-;
-;
-;
-;
-MakeAnimation 	proc
-
-		mov di, (FRAME_WIDTH / 2) * 2 ;used to make even numbers
-		mov si, FRAME_FILL
-		mov cl, 0
-		mov dx, LINE_LENGTH * 2
-
-NextAnimation:	cmp di, 0
-		je EndAnimation
-
-		mov al, FRAME_HEIGHT
-		mov ah, 0
-		mov ch, 0
-
-		mov bx, (X_BEGIN + (Y_BEGIN - 1) * LINE_LENGTH) * 2
-		add bx, di
-
+		mov ah, FRAME_COLOR
+		mov di, (X_BEGIN + (Y_BEGIN - 1) * LINE_LENGTH) * 2		
 		call PrintFrame
 
-		sub di, 2
-		add cl, 4
-		sub dx, 4
-
-;		push cx
-;		push dx
-;		mov ax, 86h
-;		int 15h
-;		pop dx
-;		pop cx
-
-		jmp NextAnimation
-
-EndAnimation:	ret
-		endp
+		call TerminatePr
 
 ;----------------------------------------------------------
-;SetFrameShadowRegisters - sets initial values to print shadow
-;Enter: ES = VIDEO_MEMORY
-;Exit:  AL = FRAME_HEIGHT, AH = 0, 	   BX = shadow_position
-;	CL = FRAME_WIDTH,  DX = line_step, SI = FRAME_SHADOW_FILL,
-;	ES = VIDEO_MEMORY	
-;Destr: AX BX CL DX SI
-;----------------------------------------------------------
-SetFrameShadowRegisters		proc
-
-		mov bx, (X_BEGIN + 1 + Y_BEGIN * LINE_LENGTH) * 2
-		mov dx, (LINE_LENGTH - FRAME_WIDTH) * 2
-
-		mov al, FRAME_HEIGHT
-		mov ah, 0
-
-		mov cl, FRAME_WIDTH
-
-		mov si, FRAME_SHADOW_FILL
-
-		ret
-		endp
-
-;----------------------------------------------------------
-;SetFrameRegisters sets initial values for registers to draw a frame
-;Entry: AL = FRAME_HEIGHT, CL = FRAME_WIDTH,
-;	DX = line_step, ES = VIDEO_MEMORY
-;Exit:  AL = FRAME_HEIGHT, AH = 0, 	   BX = frame_position,
-;	CL = FRAME_WIDTH,  DX = line_step, SI = FRAME_FILL
-;	ES = VIDEO_MEMORY
-;Destr: AH BX SI
-;----------------------------------------------------------
-SetFrameRegisters	proc
-
-		mov bx, (X_BEGIN + (Y_BEGIN - 1) * LINE_LENGTH) * 2
-
-		mov ah, 0
-
-		mov si, FRAME_FILL
-
-		ret
-		endp
-
-;----------------------------------------------------------
-;Prints frame at given place with given filler
-;Enter: AL = FRAME_HEIGHT, AH = 0, 	   BX = frame_position
-;	CL = FRAME_WIDTH,  DX = line_step, SI = FRAME_FILL
-;	ES = VIDEO_MEMORY
+;PrintFrame prints a frame at given place with given color and symbols
+;Enter: AH = FRAME_COLOR, BX -> FramePattern, ES = VIDEO_MEMORY,
+;	SI = frame_begin, DI -> FramePattern, DF = 0
 ;Exit:  none
-;Destr: AH BX CH
+;Destr: AX, BX, CX, DX, SI, DI
 ;----------------------------------------------------------
 PrintFrame	proc
-	
-NextLine:	cmp ah, al
-		je EndFrame
 
-		call PrintFrameLine
-		
-		add bx, dx
-		inc ah
-		jmp NextLine
+		;top row
+		mov cx, FRAME_WIDTH - 2
+		call PrintRow
 
-EndFrame:	ret
-		endp
+		;middle rows
+		mov cx, FRAME_HEIGHT - 2
+		add bx, 3
 
-;----------------------------------------------------------
-;Prints line at given place with given filler
-;Enter: BX = line_begin, CL = FRAME_WIDTH, 
-;	SI = FRAME_FILL, ES = VIDEO_MEMORY 
-;Exit:  BX = line_end
-;Destr: BX CH
-;----------------------------------------------------------
-PrintFrameLine	proc
-		mov ch, 0
+MiddleRows:	mov dx, cx		;temp saving location
+		mov cx, FRAME_WIDTH - 2
+		call PrintRow
+		mov cx, dx
+		loop MiddleRows
 
-NextSymbol:	cmp ch, cl
-		je EndFrameLine
-
-		mov es:[bx], si
-		inc bx
-		inc bx
-
-		inc ch
-		jmp NextSymbol
-
-EndFrameLine:	ret
-		endp
-
-;----------------------------------------------------------
-;PrintFrameColumn prints a column at given place with given filler
-;Enter: AL = FRAME_HEIGHT, BX = column_begin, DX = LINE_LENGTH * 2
-;	ES = VIDEO_MEMORY, SI = FRAME_COLUMN_BORDER
-;Exit:  BX = column_end
-;Destr: AH, BX
-;----------------------------------------------------------
-PrintFrameColumn	proc
-		mov ah, 0
-
-NextFrameColumnSymbol:
-		cmp ah, al
-		je EndFrameColumn
-
-		mov es:[bx], si
-		
-		add bx, dx
-		inc ah
-		jmp NextFrameColumnSymbol
-
-EndFrameColumn:	ret
-		endp
-
-;----------------------------------------------------------
-;PrintBorder prints frame border
-;Enter: AL = FRAME_HEIGHT, CL = FRAME_WIDTH, ES = VIDEO_MEMORY
-;Exit:  none
-;Destr: AH, BX, CH, DX, SI
-;----------------------------------------------------------
-PrintBorder	proc
-		
-		;print left column		
-		mov bx, (X_BEGIN + (Y_BEGIN - 1) * LINE_LENGTH) * 2		
-		mov dx, LINE_LENGTH * 2
-		mov si, FRAME_COLUMN_BORDER
-		call PrintFrameColumn
-		
-		;print right column
-		mov bx, (X_BEGIN + FRAME_WIDTH - 1 + (Y_BEGIN - 1) * LINE_LENGTH) * 2
-		call PrintFrameColumn
-
-		;print top line
-		mov si, FRAME_LINE_BORDER
-		mov bx, (X_BEGIN + (Y_BEGIN - 1) * LINE_LENGTH) * 2
-		call PrintFrameLine
-
-		;print bottom line
-		mov bx, (X_BEGIN + (Y_BEGIN - 2 + FRAME_HEIGHT) * LINE_LENGTH) * 2
-		call PrintFrameLine
+		;bottom row
+		mov cx, FRAME_WIDTH - 2
+		add bx, 3
+		call PrintRow
 
 		ret
 		endp
 
+;----------------------------------------------------------
+;SetStreams sets video_mem and input data streams
+;Enter: none
+;Exit:  BX -> FramePattern, ES = VIDEO_MEMORY,
+;	SI -> FramePattern, DI = 0, DF = 0
+;Destr: AX, ES, SI, DI, DF
+;----------------------------------------------------------
+SetStreams	proc
+
+		mov ax, VIDEO_MEMORY
+		mov es, ax			;es -> video_mem segment
+
+		xor di, di
+		mov si, offset FramePattern	;si -> FramePattern string
+		mov bx, si
+		cld				;clear DF flag
+
+		ret
+		endp
+
+;----------------------------------------------------------
+;FillBackground fills background with a constant filler.
+;Enter: ES = VIDEO_MEMORY, DI = 0, DF = 0
+;Exit:  none
+;Destr: AX, CX, DI
+;----------------------------------------------------------
+FillBackground	proc
+
+		mov cx, LINE_LENGTH * LINE_NUMBER
+		mov ax, BG_FILLER
+		rep stosw
+
+		ret
+		endp
+
+;----------------------------------------------------------
+;PrintRow prints a row of symbols with a given from ds pattern
+;Enter:	AH = COLOR, BX = pattern_str_begin, CX = NUM_OF_SYMBOLS - 2
+;Exit:  none
+;Destr: AL, CX, SI, DI
+;----------------------------------------------------------
+PrintRow	proc
+		
+		push cx
+		mov si, bx
+		
+		lodsb
+		stosw		;left part
+
+		lodsb
+		rep stosw	;middle part
+
+		lodsb
+		stosw		;right part
+		
+		;----------------------
+		;cringe?
+		pop cx
+		shl cx, 1			;cx *= 2
+		add di, (LINE_LENGTH - 2) * 2	;di offset after each row
+		sub di, cx
+		;----------------------
+
+		ret
+		endp
+
+;----------------------------------------------------------
+;TerminatePr end the programm. 
+;Enter: none
+;Exit:  none
+;Destr: AX
+;----------------------------------------------------------
+TerminatePr	proc
+
+		mov ax, 4c00h
+		int 21h
+
+		ret
+		endp
+
+FramePattern 	db "/-\| |\_/$"
+
 end		Start
-
-
-
-
-
-
-
-
-
