@@ -4,38 +4,68 @@
 org 100h
 
 ;----------------------------------------------------------
-X_CENTER			equ 30
-Y_CENTER			equ 10
+X_CENTER			equ 40		; frame center on horizontal
+Y_CENTER			equ 12		; frame center on vertical
 
-PATTERN_STRING_SIZE		equ 9
-PATTERN_STRING_STEP		equ 3
-NUM_OF_LINE_BORDER_SYMBOLS	equ 2
+PATTERN_STRING_SIZE		equ 9		; size of frame pattern string
+PATTERN_STRING_STEP		equ 3		; 3 symbols from pattern are used to draw a line
+NUM_OF_LINE_BORDER_SYMBOLS	equ 2		; left and right symbols in line
 
-ANIMATION_BEGIN_FRAME_WIDTH	equ 2
-ANIMATION_STEP_IN_SYMBOLS	equ 2
-ANIMATION_WAIT			equ 02fffh
+ANIMATION_BEGIN_FRAME_WIDTH	equ 2		; initial frame width during animation
+ANIMATION_STEP_IN_SYMBOLS	equ 2		; width increase by animation step
+ANIMATION_WAIT			equ 02fffh	; delay before animation next step
 
-BACKGROUND_FILL_PATTERN		equ 70b0h
-FRAME_COLOR			equ 1fh
-SHADOW_COLOR			equ 88h
+BACKGROUND_FILL_PATTERN		equ 70b0h	; white background black ° symbol
+FRAME_COLOR			equ 1fh		; blue background with white symbols
+SHADOW_COLOR			equ 88h		; black background with grey symbols
 
-KEYBOARD_ENTER_ADDRESS		equ 82h
-DECIMAL_RADIX			equ 10
-ZERO_SYMBOL			equ '0'
+KEYBOARD_ENTER_ADDRESS		equ 82h		; memory address where terminal input starts
+DECIMAL_RADIX			equ 10		; decimal radix for calculations
+ZERO_SYMBOL			equ '0'		; ascii code of '0' symbol
 
-VIDEO_MEMORY_ADDRESS		equ 0b800h
-VIDEO_MEM_CELL_SIZE		equ 2
-LINE_LENGTH_IN_SYMBOLS		equ 80
-LINES_NUMBER			equ 25
+VIDEO_MEMORY_ADDRESS		equ 0b800h	; segment address of video memory, that is printed on the screen
+VIDEO_MEM_CELL_SIZE		equ 2		; two bytes: color and symbol
+LINE_LENGTH_IN_SYMBOLS		equ 80		; window width in symbols
+LINES_NUMBER			equ 25		; window height in symbols
 ;----------------------------------------------------------
 
-Start:		call SetStreams
+Start:		
+		mov ax, VIDEO_MEMORY_ADDRESS
+		mov es, ax			; es = VIDEO_MEMORY_ADDRESS
+
+		xor di, di			; di = 0
+
+		cld 				; clear DF flag
+
 		call FillBackground
-		call GetInput
+		call GetInput			; gets terminal input
 		
 		call PrintAnimatedFrame
 
-		call TerminatePr
+		mov ax, 4c00h			; terminate program
+		int 21h
+
+;----------------------------------------------------------
+; FillBackground fills background with a constant filler.
+; Enter: ES = VIDEO_MEMORY_ADDRESS, DI = 0, DF = 0
+; Exit:  none
+; Destr: AX, CX, DI
+;----------------------------------------------------------
+FillBackground	proc
+
+		;----------------------
+		; cx = num_of_screen_symbols
+		;----------------------
+		mov cx, LINE_LENGTH_IN_SYMBOLS * LINES_NUMBER
+		mov ax, BACKGROUND_FILL_PATTERN
+
+		;----------------------
+		; print pattern in every symbol
+		;----------------------
+		rep stosw
+
+		ret
+		endp
 
 ;----------------------------------------------------------
 ; GetInput gets input values from user
@@ -83,51 +113,12 @@ GetInput	proc
 		endp
 
 ;----------------------------------------------------------
-; GetInputPattern gets the pattern user choose.
-; It can be a number from 1 to 4 for pre-installed patterns
-; or 0 for a user pattern
-; Enter: DI = user_input
-; Exit:  SI = pattern_string
-; Destr: AX, CL, SI
-;----------------------------------------------------------
-GetInputPattern	proc
-
-		cmp [di], byte ptr ZERO_SYMBOL
-		je UserPattern
-		
-		;----------------------
-		; si = frame_pattern + ([di] - '0' - 1) * 9
-		;----------------------
-		xor ax, ax
-		mov al, [di]
-		sub al, ZERO_SYMBOL + 1
-		mov cl, PATTERN_STRING_SIZE
-		mul cl
-
-		mov si, offset frame_pattern
-		add si, ax
-
-		jmp EndGetInputPattern
-
-UserPattern:	
-		;----------------------
-		; si = pattern_string
-		;----------------------
-		inc di
-		inc di
-		mov si, di
-
-EndGetInputPattern:	
-		ret
-		endp
-
-;----------------------------------------------------------
 ; ReadDecimalValue reads decimal number (up to 2 symbols)
 ; Enter: CL = DECIMAL_RADIX, DI = READ_ADDRESS (in ds)
 ; Exit:  AL = value
 ; Destr: AX, DI
 ;----------------------------------------------------------
-ReadDecimalValue	proc
+ReadDecimalValue proc
 
 		xor ax, ax
 
@@ -156,6 +147,191 @@ ReadNumberEnd:	ret
 		endp
 
 ;----------------------------------------------------------
+; GetInputPattern gets the pattern user choose.
+; It can be a number from 1 to 4 for pre-installed patterns
+; or 0 for a user pattern
+; Enter: DI = user_input
+; Exit:  SI = pattern_string
+; Destr: AX, CL, SI
+;----------------------------------------------------------
+GetInputPattern	proc
+
+		;----------------------
+		; check if user pattern selected
+		;----------------------
+		cmp byte ptr [di], ZERO_SYMBOL
+		je UserPattern
+		
+		;----------------------
+		; set frame pattern to prepared one
+		; si = frame_pattern + ([di] - '0' - 1) * 9
+		;----------------------
+		xor ax, ax
+		mov al, [di]
+		sub al, ZERO_SYMBOL + 1
+		mov cl, PATTERN_STRING_SIZE
+		mul cl
+
+		mov si, offset frame_pattern
+		add si, ax
+
+		jmp EndGetInputPattern
+
+UserPattern:	;----------------------
+		; si = pattern_string
+		;----------------------
+		inc di
+		inc di
+		mov si, di
+
+EndGetInputPattern:	
+		ret
+		endp
+
+;----------------------------------------------------------
+; PrintAnimatedFrame prints animated frame of given size and pattern
+; Enter: BL = frame_width, BH = frame_height, SI = frame_pattern,
+; 	 ES = VIDEO_MEMORY_ADDRESS
+; Exit:  none
+; Destr: AX, BX, CX, DX, SI, DI
+;----------------------------------------------------------
+PrintAnimatedFrame proc
+
+		xor cx, cx
+		mov cl, ANIMATION_BEGIN_FRAME_WIDTH
+
+		;----------------------
+		; di = frame_center
+		;----------------------
+		mov di, (X_CENTER + (Y_CENTER - 1) * LINE_LENGTH_IN_SYMBOLS) * VIDEO_MEM_CELL_SIZE
+
+BeginAnimation:	cmp cl, bl
+		jg EndAnimation
+
+		;----------------------
+		; set frame color
+		;----------------------
+		xor ax, ax
+		mov ah, FRAME_COLOR
+
+		;----------------------
+		; save needed register values
+		;----------------------
+		push bx
+		push cx
+		push si
+		push di
+
+		;----------------------
+		; bl = current_frame_width
+		; print frame with current width
+		;----------------------
+		mov bl, cl
+		call PrintFrame
+
+		;----------------------
+		; DOS Fn 86h - wait
+		;----------------------
+		xor cx, cx
+		mov dx, ANIMATION_WAIT
+		mov ah, 86h
+		int 15h
+
+		;----------------------
+		; get register values back
+		;----------------------
+		pop di
+		pop si
+		pop cx
+		pop bx
+		add cl, ANIMATION_STEP_IN_SYMBOLS
+		jmp BeginAnimation
+
+EndAnimation:	ret
+		endp
+
+;----------------------------------------------------------
+; PrintFrame prints a frame at given place with given color and symbols
+; Enter: AH = FRAME_COLOR,          BL = frame_width,   BH = frame_heigth, 
+; 	 ES = VIDEO_MEMORY_ADDRESS, SI -> pattern_line, DI = frame_center, DF = 0
+; Exit:  none
+; Destr: AX, BX, CX, DX, SI, DI
+;----------------------------------------------------------
+PrintFrame	proc
+
+		;----------------------
+		; save frame_color in ax by push/pop
+		; di = frame_corner
+		;----------------------
+		push ax
+		call FindFrameCorner
+		pop ax
+
+		;----------------------
+		; save frame_corner for shadow
+		;----------------------
+		push di
+
+		;----------------------
+		; PRINT TOP ROW
+		; cl = num_of_interior_symbols = frame_width - 2
+		;----------------------
+		xor cx, cx
+		mov cl, bl
+		sub cl, NUM_OF_LINE_BORDER_SYMBOLS
+		call PrintRow
+
+		;----------------------
+		; PRINT MIDDLE ROWS
+		; cl = num_of_middle_rows = frame_height - 2
+		;----------------------
+		xor cx, cx
+		mov cl, bh
+		sub cl, NUM_OF_LINE_BORDER_SYMBOLS
+
+MiddleRows:	;----------------------
+		; save cx for external loop
+		; cl = num_of_internal_symbols = frame_width - 2
+		;----------------------
+		push cx
+		xor cx, cx
+		mov cl, bl
+		sub cl, NUM_OF_LINE_BORDER_SYMBOLS
+		call PrintRow
+		
+		;----------------------
+		; get cx value for external loop
+		;----------------------
+		pop cx
+
+		;----------------------
+		; si -= 3 during the loop
+		; for repeating pattern
+		;----------------------
+		sub si, PATTERN_STRING_STEP
+
+		loop MiddleRows
+
+		;----------------------
+		; PRINT BOTTOM ROW
+		; cl = num_of_internal_symbols = frame_width - 2
+		; si += 3 to move the pattern
+		;----------------------
+		xor cx, cx
+		mov cl, bl
+		sub cl, NUM_OF_LINE_BORDER_SYMBOLS 
+		add si, PATTERN_STRING_STEP
+		call PrintRow
+		
+		;----------------------
+		; makes you a sandwich
+		;----------------------
+		call PrintShadow
+
+		ret
+		endp
+
+;----------------------------------------------------------
 ; FindFrameCorner finds the upper left corner of the frame from its center
 ; Enter: BL = frame_width, BH = frame_height, DI = frame_center
 ; Exit:  DI = frame_corner_position
@@ -180,205 +356,6 @@ FindFrameCorner	proc
 		;----------------------
 		mov al, bl
 		sub di, ax
-
-		ret
-		endp
-
-;----------------------------------------------------------
-; PrintAnimatedFrame prints animated frame of given size and pattern
-; Enter: BL = frame_width, BH = frame_height, SI = frame_pattern,
-; 	 ES = VIDEO_MEMORY_ADDRESS
-; Exit:  none
-; Destr: AX, BX, CX, DX, SI, DI
-;----------------------------------------------------------
-PrintAnimatedFrame	proc
-
-		xor cx, cx
-		mov cl, ANIMATION_BEGIN_FRAME_WIDTH
-
-		mov di, (X_CENTER + (Y_CENTER - 1) * LINE_LENGTH_IN_SYMBOLS) * VIDEO_MEM_CELL_SIZE
-
-BeginAnimation:	cmp cl, bl
-		jg EndAnimation
-
-		;----------------------
-		; set frame color
-		;----------------------
-		xor ax, ax
-		mov ah, FRAME_COLOR
-
-		;----------------------
-		; save needed register values
-		;----------------------
-		push bx
-		push cx
-		push si
-
-		;----------------------
-		; bl = current_frame_width
-		; print frame with current width
-		;----------------------
-		mov bl, cl
-		call PrintFrame
-
-		;----------------------
-		; DOS Fn 86h - wait
-		;----------------------
-		xor cx, cx
-		mov dx, ANIMATION_WAIT
-		mov ah, 86h
-		int 15h
-
-		;----------------------
-		; get register values back
-		;----------------------
-		pop si
-		pop cx
-		pop bx
-		add cl, ANIMATION_STEP_IN_SYMBOLS
-		jmp BeginAnimation
-
-EndAnimation:	ret
-		endp
-
-;----------------------------------------------------------
-; PrintFrame prints a frame at given place with given color and symbols
-; Enter: AH = FRAME_COLOR,          BL = frame_width,   BH = frame_heigth, 
-; 	 ES = VIDEO_MEMORY_ADDRESS, SI -> pattern_line, DI = frame_center, DF = 0
-; Exit:  none
-; Destr: AX, BX, CX, DX, SI, DI
-;----------------------------------------------------------
-PrintFrame	proc
-		
-		;----------------------
-		; save center value for animation
-		;----------------------
-		push di
-
-		;----------------------
-		; save frame_color in ax by push/pop
-		; di = frame_corner
-		;----------------------
-		push ax
-		call FindFrameCorner
-		pop ax
-
-		;----------------------
-		; save frame_corner for shadow
-		;----------------------
-		push di
-
-		;----------------------
-		; print top row
-		; cl = num_of_interior_symbols = frame_width - 2
-		;----------------------
-		xor cx, cx
-		mov cl, bl
-		sub cl, NUM_OF_LINE_BORDER_SYMBOLS
-		call PrintRow
-
-		;----------------------
-		; print middle rows
-		; cl = num_of_middle_rows = frame_height - 2
-		;----------------------
-		xor cx, cx
-		mov cl, bh
-		sub cl, NUM_OF_LINE_BORDER_SYMBOLS
-
-MiddleRows:	
-		;----------------------
-		; save cx for external loop
-		; cl = num_of_internal_symbols = frame_width - 2
-		;----------------------
-		push cx
-		xor cx, cx
-		mov cl, bl
-		sub cl, NUM_OF_LINE_BORDER_SYMBOLS
-		call PrintRow
-		
-		;----------------------
-		; get cx value for external loop
-		;----------------------
-		pop cx
-
-		;----------------------
-		; si -= 3 during the loop
-		; for repeating pattern
-		;----------------------
-		sub si, PATTERN_STRING_STEP
-
-		loop MiddleRows
-
-		;----------------------
-		; print bottom row
-		; cl = num_of_internal_symbols = frame_width - 2
-		; si += 3 to move the pattern
-		;----------------------
-		xor cx, cx
-		mov cl, bl
-		sub cl, NUM_OF_LINE_BORDER_SYMBOLS 
-		add si, PATTERN_STRING_STEP
-		call PrintRow
-		
-		;----------------------
-		; makes you a sandwich
-		;----------------------
-		call PrintShadow
-
-		;----------------------
-		; return center value for animation
-		;----------------------
-		pop di
-
-		ret
-		endp
-
-;----------------------------------------------------------
-; SetStreams sets video_mem and input data streams
-; Enter: none
-; Exit:  ES = VIDEO_MEMORY_ADDRESS, SI -> frame_pattern, DI = 0, DF = 0
-; Destr: AX, ES, SI, DI, DF
-;----------------------------------------------------------
-SetStreams	proc
-		
-		;----------------------
-		; ES = VIDEO_MEMORY_ADDRESS
-		; used to print something on the screen
-		;----------------------
-		mov ax, VIDEO_MEMORY_ADDRESS
-		mov es, ax
-
-		;----------------------
-		; di = 0
-		;----------------------
-		xor di, di
-
-		;----------------------
-		; clear destination flag
-		;----------------------
-		cld
-
-		ret
-		endp
-
-;----------------------------------------------------------
-; FillBackground fills background with a constant filler.
-; Enter: ES = VIDEO_MEMORY_ADDRESS, DI = 0, DF = 0
-; Exit:  none
-; Destr: AX, CX, DI
-;----------------------------------------------------------
-FillBackground	proc
-
-		;----------------------
-		; cx = num_of_screen_symbols
-		;----------------------
-		mov cx, LINE_LENGTH_IN_SYMBOLS * LINES_NUMBER
-		mov ax, BACKGROUND_FILL_PATTERN
-
-		;----------------------
-		; print pattern in every symbol
-		;----------------------
-		rep stosw
 
 		ret
 		endp
@@ -510,19 +487,8 @@ PrintSymbolColumn:
 		endp
 
 ;----------------------------------------------------------
-; TerminatePr ends the programm. 
-; Enter: none
-; Exit:  none
-; Destr: AX
+; array of 4 lines with frame patterns
 ;----------------------------------------------------------
-TerminatePr	proc
-
-		mov ax, 4c00h
-		int 21h
-
-		ret
-		endp
-
 frame_pattern 	db 0dah, 0c4h, 0bfh, 0b3h, ' ', 0b3h, 0c0h, 0c4h, 0d9h, \
 		   0c9h, 0cdh, 0bbh, 0bah, ' ', 0bah, 0c8h, 0cdh, 0bch, \
 		    ' ', 0c4h,  ' ', 0b3h, ' ', 0b3h,  ' ', 0c4h,  ' ', \
