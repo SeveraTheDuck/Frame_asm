@@ -7,7 +7,7 @@ org 100h
 X_CENTER			equ 40		; frame center on horizontal
 Y_CENTER			equ 12		; frame center on vertical
 
-PATTERN_STRING_SIZE		equ 9		; size of frame pattern string
+PATTERN_STRING_LENGTH		equ 9		; size of frame pattern string
 PATTERN_STRING_STEP		equ 3		; 3 symbols from pattern are used to draw a line
 NUM_OF_LINE_BORDER_SYMBOLS	equ 2		; left and right symbols in line
 
@@ -22,6 +22,8 @@ SHADOW_COLOR			equ 88h		; black background with grey symbols
 KEYBOARD_ENTER_ADDRESS		equ 82h		; memory address where terminal input starts
 DECIMAL_RADIX			equ 10		; decimal radix for calculations
 ZERO_SYMBOL			equ '0'		; ascii code of '0' symbol
+END_OF_INPUT_SYMBOL		equ 0dh		; ascii code of '\n' symbol
+PHRASE_NEW_LINE_SYMBOL		equ '#'		; ascii code of '#' symbol
 
 VIDEO_MEMORY_ADDRESS		equ 0b800h	; segment address of video memory, that is printed on the screen
 VIDEO_MEM_CELL_SIZE		equ 2		; two bytes: color and symbol
@@ -38,9 +40,13 @@ Start:
 		cld 				; clear DF flag
 
 		call FillBackground
+
 		call GetInput			; gets terminal input
+		push di				; push possible input phrase address
 		
 		call PrintAnimatedFrame
+
+		call PrintInputPhrase		; prints a phrase in frame
 
 		mov ax, 4c00h			; terminate program
 		int 21h
@@ -108,6 +114,7 @@ GetInput	proc
 		;----------------------
 		inc di
 		call GetInputPattern
+		inc di
 
 		ret
 		endp
@@ -169,7 +176,7 @@ GetInputPattern	proc
 		xor ax, ax
 		mov al, [di]
 		sub al, ZERO_SYMBOL + 1
-		mov cl, PATTERN_STRING_SIZE
+		mov cl, PATTERN_STRING_LENGTH
 		mul cl
 
 		mov si, offset frame_pattern
@@ -179,10 +186,12 @@ GetInputPattern	proc
 
 UserPattern:	;----------------------
 		; si = pattern_string
+		; di = input_phrase (possible)
 		;----------------------
 		inc di
 		inc di
 		mov si, di
+		add di, PATTERN_STRING_LENGTH - 1
 
 EndGetInputPattern:	
 		ret
@@ -486,12 +495,85 @@ PrintSymbolColumn:
 		ret
 		endp
 
+;
+;
+;
+;
+;
+;
+PrintInputPhrase proc
+
+		;----------------------
+		; save function return address
+		;----------------------
+		pop dx
+
+		;----------------------
+		; get possible phrase begin
+		;----------------------
+		pop si
+
+		;----------------------
+		; if ([si] == '\n') end;
+		; else si++;
+		;----------------------
+		cmp byte ptr [si], END_OF_INPUT_SYMBOL
+		je EndOfPhrase
+
+		inc si
+
+		;----------------------
+		; di = frame_internal_corner (not border)
+		;----------------------
+		mov di, (X_CENTER + (Y_CENTER - 1) * LINE_LENGTH_IN_SYMBOLS) * VIDEO_MEM_CELL_SIZE
+		call FindFrameCorner
+		add di, (LINE_LENGTH_IN_SYMBOLS + NUM_OF_LINE_BORDER_SYMBOLS) * VIDEO_MEM_CELL_SIZE
+
+		;----------------------
+		; save corner value
+		; useful if next line symbol found
+		;----------------------
+		push di
+
+PhraseNextSymbol:
+		;----------------------
+		; while ([si] != '\n') 
+		; {
+		;     if (video_mem [di] == '#')
+		;     {
+		;         di = next_line_begin;
+		;	  si++;
+		;	  continue;
+		;     }
+		;     video_mem [di++] = phrase [si++];
+		;     di++;
+		; }
+		;----------------------
+		cmp byte ptr [si], END_OF_INPUT_SYMBOL
+		je EndOfPhrase
+
+		cmp byte ptr [si], PHRASE_NEW_LINE_SYMBOL
+		jne PrintPhraseSymbol
+
+		pop di
+		add di, LINE_LENGTH_IN_SYMBOLS * VIDEO_MEM_CELL_SIZE
+		push di
+		inc si
+		jmp PhraseNextSymbol
+
+PrintPhraseSymbol:
+		movsb
+		inc di
+
+		jmp PhraseNextSymbol
+
+EndOfPhrase:	push dx
+		ret
+		endp
+
 ;----------------------------------------------------------
 ; array of 4 lines with frame patterns
 ;----------------------------------------------------------
-frame_pattern 	db 0dah, 0c4h, 0bfh, 0b3h, ' ', 0b3h, 0c0h, 0c4h, 0d9h, \
-		   0c9h, 0cdh, 0bbh, 0bah, ' ', 0bah, 0c8h, 0cdh, 0bch, \
-		    ' ', 0c4h,  ' ', 0b3h, ' ', 0b3h,  ' ', 0c4h,  ' ', \
-		   0dah, 0c1h, 0bfh, 0b4h, ' ', 0c3h, 0c0h, 0c2h, 0d9h
+frame_pattern 	db 'ÚÄ¿³ ³ÀÄÙ', 'ÉÍ»º ºÈÍ¼', ' Ä ³ ³ Ä ', 'ÚÁ¿´ ÃÀÂÙ'
 
 end		Start
